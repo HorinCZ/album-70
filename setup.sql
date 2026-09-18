@@ -19,6 +19,8 @@ create table album70_private.photos (
  ready boolean not null default false, hidden boolean not null default false,
  charged_bytes bigint not null default 20000000 check(charged_bytes between 1 and 20000000)
 );
+alter table album70_private.settings enable row level security;
+alter table album70_private.photos enable row level security;
 -- Charge the full 10 MB limit for EACH of the two objects while an upload is
 -- pending. The row lock in reserve serializes quota reservations. Failed
 -- reservations stay charged; this intentionally fails closed until cleaned up.
