@@ -83,9 +83,26 @@ $('#download').onclick=()=>{if(!activePhoto||$('#download').disabled)return;cons
 $('#viewer-close').onclick=()=>$('#viewer').close();
 $('#viewer').addEventListener('close',()=>{activePhoto=null;++viewRequest;touchStart=null;$('#full').removeAttribute('src');document.body.classList.remove('viewing');clearOriginals()});
 $('#viewer').addEventListener('keydown',e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();movePhoto(e.key==='ArrowLeft'?-1:1)}});
-$('#viewer-stage').addEventListener('touchstart',e=>{touchStart=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});
-$('#viewer-stage').addEventListener('touchcancel',()=>{touchStart=null},{passive:true});
-$('#viewer-stage').addEventListener('touchend',e=>{if(!touchStart)return;const t=e.changedTouches[0],dx=t.clientX-touchStart.x,dy=t.clientY-touchStart.y;touchStart=null;if(Math.abs(dx)>60&&Math.abs(dx)>Math.abs(dy)*1.5)movePhoto(dx<0?1:-1)},{passive:true});
+// Lock horizontal gestures before the browser turns them into scrolling.
+const swipeSurface=$('#viewer');
+swipeSurface.addEventListener('touchstart',e=>{
+ touchStart=e.touches.length===1&&!e.target.closest('button')&&(!window.visualViewport||window.visualViewport.scale<=1.05)?{x:e.touches[0].clientX,y:e.touches[0].clientY,axis:null}:null;
+},{passive:true});
+swipeSurface.addEventListener('touchmove',e=>{
+ if(!touchStart)return;
+ if(e.touches.length!==1){touchStart=null;return}
+ const dx=e.touches[0].clientX-touchStart.x,dy=e.touches[0].clientY-touchStart.y;
+ if(!touchStart.axis&&Math.max(Math.abs(dx),Math.abs(dy))>10)touchStart.axis=Math.abs(dx)>Math.abs(dy)?'x':'y';
+ if(touchStart.axis==='x'&&e.cancelable)e.preventDefault();
+},{passive:false});
+swipeSurface.addEventListener('touchcancel',()=>{touchStart=null},{passive:true});
+swipeSurface.addEventListener('touchend',e=>{
+ if(!touchStart)return;
+ const start=touchStart;touchStart=null;
+ if(!e.changedTouches.length||e.touches.length)return;
+ const dx=e.changedTouches[0].clientX-start.x,dy=e.changedTouches[0].clientY-start.y;
+ if(start.axis!=='y'&&Math.abs(dx)>=30&&Math.abs(dx)>Math.abs(dy)*1.2)movePhoto(dx<0?1:-1);
+},{passive:true});
 async function thumbnail(file){const bitmap=await createImageBitmap(file);const ratio=Math.min(1,480/Math.max(bitmap.width,bitmap.height));const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*ratio));canvas.height=Math.max(1,Math.round(bitmap.height*ratio));canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Nelze vytvořit náhled.')),'image/jpeg',0.75))}
 async function upload(path,file){await request('/storage/v1/object/album70/'+path,{method:'POST',headers:{'Content-Type':file.type,'x-upsert':'false','Cache-Control':'no-store'},body:file})}
 $('#add').onclick=()=>$('#files').click();
