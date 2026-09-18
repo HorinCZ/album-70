@@ -25,7 +25,7 @@ async function load(reset=true){
  try{
   state=await rpc('album70_state');$('#add').disabled=!state.uploads_open||busy;
   $('#admin-panel').hidden=!state.is_admin;$('#toggle-uploads').textContent=state.uploads_open?'Pozastavit nahrávání':'Povolit nahrávání';
-  if(reset){page=0;photos=[];$('#grid').replaceChildren();releaseImages()}
+  if(reset){if($('#viewer').open)$('#viewer').close();clearOriginals();page=0;photos=[];$('#grid').replaceChildren();releaseImages()}
   const rows=await rpc('album70_list',{p_offset:page*40,p_hidden:!!admin&&$('#show-hidden').checked});
   photos.push(...rows);for(const p of rows)render(p);page++;
   const n=state.photo_count;$('#count').textContent=n+' '+(n===1?'fotka':n>=2&&n<=4?'fotky':'fotek');$('#empty').hidden=photos.length>0;$('#more').hidden=rows.length<40;
@@ -42,10 +42,50 @@ function render(p){
  if(state.is_admin){const hide=document.createElement('button');hide.className='secondary';hide.textContent=p.hidden?'Obnovit':'Skrýt';hide.onclick=async()=>{hide.disabled=true;try{await rpc('album70_hide',{p_id:p.id,p_hidden:!p.hidden});await load()}catch(e){status(e.message,true);hide.disabled=false}};card.append(hide)}
  $('#grid').append(card);observer.observe(img);
 }
-async function openPhoto(p){activePhoto=p;$('#caption').textContent=p.display_name;$('#full').removeAttribute('src');$('#viewer').showModal();$('#download').disabled=true;try{const b=await blob(p.path);if(activePhoto!==p)return;$('#full').src=localURL(b);$('#download').disabled=false}catch(e){$('#caption').textContent=e.message}}
-$('#download').onclick=()=>{if(!activePhoto||!$('#full').src)return;const a=document.createElement('a');a.href=$('#full').src;a.download=activePhoto.display_name;a.click()};
-$('#viewer-close').onclick=()=>{$('#viewer').close();activePhoto=null};
-$('#viewer').addEventListener('close',()=>{activePhoto=null});
+let viewRequest=0,navigating=false,touchStart=null;
+const originals=new Map();
+function clearOriginals(){for(const u of originals.values())URL.revokeObjectURL(u);originals.clear()}
+function viewerControls(){
+ const i=photos.indexOf(activePhoto);
+ $('#previous').disabled=navigating||i<=0;
+ $('#next').disabled=navigating||(i>=photos.length-1&&$('#more').hidden);
+ $('#position').textContent=`${i+1} / ${$('#more').hidden?photos.length:Math.max(photos.length,state.photo_count)}`;
+}
+async function openPhoto(p){
+ activePhoto=p;const ticket=++viewRequest;
+ $('#caption').textContent=p.display_name;$('#full').alt=p.display_name;
+ $('#full').removeAttribute('src');$('#full').hidden=true;
+ $('#viewer-status').textContent='Načítám fotku…';$('#download').disabled=true;
+ if(!$('#viewer').open){$('#viewer').showModal();document.body.classList.add('viewing')}
+ viewerControls();
+ try{
+  let url=originals.get(p.path);
+  if(!url){const b=await blob(p.path);if(ticket!==viewRequest)return;url=URL.createObjectURL(b);originals.set(p.path,url)}
+  if(ticket!==viewRequest)return;
+  originals.delete(p.path);originals.set(p.path,url);
+  while(originals.size>3){const key=originals.keys().next().value;URL.revokeObjectURL(originals.get(key));originals.delete(key)}
+  $('#full').src=url;$('#full').hidden=false;$('#viewer-status').textContent='';$('#download').disabled=false;
+ }catch(e){if(ticket===viewRequest)$('#viewer-status').textContent=e.message+' Zkuste fotku otevřít znovu.'}
+}
+async function movePhoto(step){
+ if(!activePhoto||navigating)return;
+ const current=activePhoto;let i=photos.indexOf(current)+step;
+ if(i<0)return;
+ if(i>=photos.length&&!$('#more').hidden){
+  navigating=true;viewerControls();
+  try{await load(false)}finally{navigating=false}
+  if(!$('#viewer').open||activePhoto!==current)return;
+ }
+ if(photos[i])openPhoto(photos[i]);else viewerControls();
+}
+$('#previous').onclick=()=>movePhoto(-1);$('#next').onclick=()=>movePhoto(1);
+$('#download').onclick=()=>{if(!activePhoto||$('#download').disabled)return;const a=document.createElement('a');a.href=$('#full').src;a.download=activePhoto.display_name;a.click()};
+$('#viewer-close').onclick=()=>$('#viewer').close();
+$('#viewer').addEventListener('close',()=>{activePhoto=null;++viewRequest;touchStart=null;$('#full').removeAttribute('src');document.body.classList.remove('viewing');clearOriginals()});
+$('#viewer').addEventListener('keydown',e=>{if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();movePhoto(e.key==='ArrowLeft'?-1:1)}});
+$('#viewer-stage').addEventListener('touchstart',e=>{touchStart=e.touches.length===1?{x:e.touches[0].clientX,y:e.touches[0].clientY}:null},{passive:true});
+$('#viewer-stage').addEventListener('touchcancel',()=>{touchStart=null},{passive:true});
+$('#viewer-stage').addEventListener('touchend',e=>{if(!touchStart)return;const t=e.changedTouches[0],dx=t.clientX-touchStart.x,dy=t.clientY-touchStart.y;touchStart=null;if(Math.abs(dx)>60&&Math.abs(dx)>Math.abs(dy)*1.5)movePhoto(dx<0?1:-1)},{passive:true});
 async function thumbnail(file){const bitmap=await createImageBitmap(file);const ratio=Math.min(1,480/Math.max(bitmap.width,bitmap.height));const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*ratio));canvas.height=Math.max(1,Math.round(bitmap.height*ratio));canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Nelze vytvořit náhled.')),'image/jpeg',0.75))}
 async function upload(path,file){await request('/storage/v1/object/album70/'+path,{method:'POST',headers:{'Content-Type':file.type,'x-upsert':'false','Cache-Control':'no-store'},body:file})}
 $('#add').onclick=()=>$('#files').click();
