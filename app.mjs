@@ -11,7 +11,12 @@ async function request(path,options={}){
  return r.status===204?null:r.json();
 }
 const rpc=(name,data={})=>request('/rest/v1/rpc/'+name,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
-async function blob(path){const r=await fetch(cfg.url+'/storage/v1/object/album70/'+path,{headers:headers()});if(!r.ok)throw new Error('Fotku se nepodařilo načíst.');return r.blob()}
+async function blob(path){
+ const signed=await request('/storage/v1/object/sign/album70/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({expiresIn:60})});
+ const url=new URL('/storage/v1'+signed.signedURL,cfg.url);
+ if(url.origin!==new URL(cfg.url).origin)throw new Error('Neplatný odkaz na fotku.');
+ const r=await fetch(url,{cache:'no-store'});if(!r.ok)throw new Error('Fotku se nepodařilo načíst.');return r.blob();
+}
 function localURL(b){const u=URL.createObjectURL(b);urls.add(u);return u}
 function releaseImages(){for(const u of urls)URL.revokeObjectURL(u);urls.clear()}
 async function load(reset=true){
@@ -23,7 +28,7 @@ async function load(reset=true){
   if(reset){page=0;photos=[];$('#grid').replaceChildren();releaseImages()}
   const rows=await rpc('album70_list',{p_offset:page*40,p_hidden:!!admin&&$('#show-hidden').checked});
   photos.push(...rows);for(const p of rows)render(p);page++;
-  $('#count').textContent=state.photo_count+' fotek';$('#empty').hidden=photos.length>0;$('#more').hidden=rows.length<40;
+  const n=state.photo_count;$('#count').textContent=n+' '+(n===1?'fotka':n>=2&&n<=4?'fotky':'fotek');$('#empty').hidden=photos.length>0;$('#more').hidden=rows.length<40;
   status(state.uploads_open?'':'Nahrávání je nyní pozastavené. Fotky si můžete dál prohlížet.');
  }catch(e){status('Album není dostupné. '+e.message,true);$('#add').disabled=true}
 }
@@ -42,7 +47,7 @@ $('#download').onclick=()=>{if(!activePhoto||!$('#full').src)return;const a=docu
 $('#viewer-close').onclick=()=>{$('#viewer').close();activePhoto=null};
 $('#viewer').addEventListener('close',()=>{activePhoto=null});
 async function thumbnail(file){const bitmap=await createImageBitmap(file);const ratio=Math.min(1,480/Math.max(bitmap.width,bitmap.height));const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(bitmap.width*ratio));canvas.height=Math.max(1,Math.round(bitmap.height*ratio));canvas.getContext('2d').drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();return new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Nelze vytvořit náhled.')),'image/jpeg',0.75))}
-async function upload(path,file){await request('/storage/v1/object/album70/'+path,{method:'POST',headers:{'Content-Type':file.type,'x-upsert':'false'},body:file})}
+async function upload(path,file){await request('/storage/v1/object/album70/'+path,{method:'POST',headers:{'Content-Type':file.type,'x-upsert':'false','Cache-Control':'no-store'},body:file})}
 $('#add').onclick=()=>$('#files').click();
 $('#files').onchange=async()=>{
  const files=[...$('#files').files];if(!files.length||busy)return;busy=true;$('#add').disabled=true;$('#refresh').disabled=true;$('#progress').hidden=false;$('#errors').replaceChildren();$('#bar').max=files.length;$('#bar').value=0;let success=0;
